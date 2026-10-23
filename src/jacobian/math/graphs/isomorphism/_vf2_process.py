@@ -29,6 +29,7 @@ from jacobian.math.graphs.isomorphism._models import (
     GraphIsomorphismResult,
     SimpleGraph,
     VertexMappingPair,
+    _is_isomorphism_mapping,
 )
 from jacobian.math.graphs.isomorphism.operations import _canonicalize_colored_graph
 
@@ -276,25 +277,7 @@ def verify_graph_isomorphism(claim: GraphIsomorphismResult) -> bool:
         return False
     if claim.status != "ISOMORPHIC":
         return False
-    mapping = tuple((item.from_vertex, item.to_vertex) for item in claim.vertex_mapping)
-    if len(mapping) != claim.graph_a.vertex_count:
-        return False
-    if {source for source, _ in mapping} != set(range(claim.graph_a.vertex_count)):
-        return False
-    if {target for _, target in mapping} != set(range(claim.graph_b.vertex_count)):
-        return False
-    forward = dict(mapping)
-    mapped_edges = {
-        (forward[source], forward[target])
-        if claim.graph_a.directed
-        else tuple(sorted((forward[source], forward[target])))
-        for source, target in claim.graph_a.edges
-    }
-    target_edges = {
-        edge if claim.graph_b.directed else tuple(sorted(edge))
-        for edge in claim.graph_b.edges
-    }
-    return mapped_edges == target_edges
+    return _is_isomorphism_mapping(claim.graph_a, claim.graph_b, claim.vertex_mapping)
 
 
 def compute_colored_graph_canonicalization(

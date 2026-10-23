@@ -72,6 +72,44 @@ class VertexMappingPair(StrictModel):
     to_vertex: int = Field(ge=0, le=63)
 
 
+def _is_isomorphism_mapping(
+    graph_a: SimpleGraph,
+    graph_b: SimpleGraph,
+    mapping: tuple[VertexMappingPair, ...],
+) -> bool:
+    """Check that ``mapping`` is a total adjacency-preserving bijection.
+
+    This is the linearly bounded defining relation of an ``ISOMORPHIC``
+    result. It does not search for a mapping and does not decide
+    ``NOT_ISOMORPHIC`` outcomes.
+    """
+
+    if len(mapping) != graph_a.vertex_count:
+        return False
+    forward: dict[int, int] = {}
+    for pair in mapping:
+        if pair.from_vertex in forward:
+            return False
+        forward[pair.from_vertex] = pair.to_vertex
+    if set(forward) != set(range(graph_a.vertex_count)):
+        return False
+    if set(forward.values()) != set(range(graph_b.vertex_count)):
+        return False
+    edges_b = {
+        edge if graph_b.directed else (min(edge), max(edge)) for edge in graph_b.edges
+    }
+    mapped_edges = {
+        (forward[source], forward[target])
+        if graph_a.directed
+        else (
+            min(forward[source], forward[target]),
+            max(forward[source], forward[target]),
+        )
+        for source, target in graph_a.edges
+    }
+    return mapped_edges == edges_b
+
+
 class GraphIsomorphismResult(StrictModel):
     """The result of a graph isomorphism decision.
 
@@ -87,10 +125,40 @@ class GraphIsomorphismResult(StrictModel):
 
     @model_validator(mode="after")
     def bind_mapping_to_status(self) -> Self:
-        if self.status != "ISOMORPHIC" and self.vertex_mapping:
+        if (
+            self.graph_a.vertex_count != self.graph_b.vertex_count
+            or self.graph_a.directed != self.graph_b.directed
+        ):
             raise PydanticCustomError(
-                "graph.nonisomorphic_result_has_mapping",
-                "only an ISOMORPHIC result may carry a vertex mapping",
+                "graph.result_graphs_must_share_vertex_count_and_directedness",
+                "a graph isomorphism result must bind graphs of equal vertex "
+                "count and directedness",
+            )
+        if self.status != "ISOMORPHIC":
+            if self.vertex_mapping:
+                raise PydanticCustomError(
+                    "graph.nonisomorphic_result_has_mapping",
+                    "only an ISOMORPHIC result may carry a vertex mapping",
+                )
+            return self
+        sources = {pair.from_vertex for pair in self.vertex_mapping}
+        targets = {pair.to_vertex for pair in self.vertex_mapping}
+        if (
+            len(sources) != len(self.vertex_mapping)
+            or len(targets) != len(self.vertex_mapping)
+            or sources != set(range(self.graph_a.vertex_count))
+            or targets != set(range(self.graph_b.vertex_count))
+        ):
+            raise PydanticCustomError(
+                "graph.isomorphic_result_mapping_must_be_total_bijection",
+                "an ISOMORPHIC result must carry a total bijection between "
+                "the source graphs' vertices",
+            )
+        if not _is_isomorphism_mapping(self.graph_a, self.graph_b, self.vertex_mapping):
+            raise PydanticCustomError(
+                "graph.isomorphic_result_mapping_must_preserve_adjacency",
+                "an ISOMORPHIC result mapping must preserve the complete "
+                "directed or undirected adjacency relation",
             )
         return self
 
