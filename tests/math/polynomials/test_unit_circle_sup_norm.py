@@ -505,6 +505,80 @@ def test_degree_eight_32_digit_request_finishes_inside_outer_deadline() -> None:
         assert verify_unit_circle_sup_norm_squared(result)
 
 
+def test_height_fallback_counts_digits_above_the_string_limit() -> None:
+    # Python's default int-to-string limit is 4,300 digits. The height
+    # fallback must return None rather than raise before the comparison.
+    assert (
+        sup_norm_kernel._primitive_descending_integers(
+            [Fraction(10**5000 + 1), Fraction(1)]
+        )
+        is None
+    )
+
+
+def test_admitted_rational_input_uses_the_documented_height_fallback() -> None:
+    # Degree-4, 32-digit rational components: admitted by the published
+    # envelope, but the exact resultant factor has a 6,194-digit primitive
+    # coefficient. The result must keep the enclosure and omit the exact value.
+    base = 10**31
+    offsets = (
+        7,
+        9,
+        33,
+        61,
+        69,
+        87,
+        91,
+        139,
+        151,
+        169,
+        193,
+        199,
+        217,
+        223,
+        259,
+        271,
+        283,
+        307,
+        319,
+        331,
+    )
+    terms = []
+    for index, exponent in enumerate(range(4, -1, -1)):
+        real = Fraction(base + offsets[4 * index], base + offsets[4 * index + 1])
+        imaginary = Fraction(
+            base + offsets[4 * index + 2], base + offsets[4 * index + 3]
+        )
+        terms.append(
+            {
+                "exponent": exponent,
+                "coefficient": {
+                    "real": {
+                        "num": str(real.numerator),
+                        "den": str(real.denominator),
+                    },
+                    "imaginary": {
+                        "num": str(imaginary.numerator),
+                        "den": str(imaginary.denominator),
+                    },
+                },
+            }
+        )
+    request = UnitCircleSupNormSquaredRequest.model_validate_json(
+        json.dumps({"polynomial": {"terms": terms}})
+    )
+
+    result = unit_circle_sup_norm_squared(request.polynomial)
+
+    assert result.degree == 4
+    assert result.sup_norm_squared_exact is None
+    assert verify_unit_circle_sup_norm_squared(result)
+    assert (
+        UnitCircleSupNormSquaredResult.model_validate_json(result.model_dump_json())
+        == result
+    )
+
+
 def test_forged_exact_maximum_is_rejected() -> None:
     result = _result({0: (1, 0), 1: (1, 0), 2: (-1, 0), 3: (1, 0)})
     forged = result.model_copy(
