@@ -32,7 +32,10 @@ from jacobian.catalog.models import (
     OperationResourceAdmissionError,
 )
 from jacobian.math._root_isolation import strict_root_count
-from jacobian.math.number_theory.algebraic_numbers.real import RealAlgebraicValue
+from jacobian.math.number_theory.algebraic_numbers.real import (
+    MAX_REAL_ALGEBRAIC_COEFFICIENT_DIGITS,
+    RealAlgebraicValue,
+)
 from jacobian.math.number_theory.number_fields import GaussianRational
 from jacobian.math.polynomials.unit_circle import _sup_norm as sup_norm_kernel
 from jacobian.math.polynomials.unit_circle._sup_norm import (
@@ -516,6 +519,24 @@ def test_height_fallback_counts_digits_above_the_string_limit() -> None:
     )
 
 
+@pytest.mark.parametrize("extra_digits", (0, 1))
+def test_primitive_factor_height_boundary(extra_digits: int) -> None:
+    coefficient = 10 ** (MAX_REAL_ALGEBRAIC_COEFFICIENT_DIGITS - 1 + extra_digits)
+    spelling = sup_norm_kernel._primitive_descending_integers(
+        [Fraction(-coefficient), Fraction(1)]
+    )
+    assert spelling == ((coefficient, -1) if extra_digits == 0 else None)
+
+
+def test_primitive_height_ignores_large_common_content() -> None:
+    content = 10**5000
+    # Scalar multiplication and rational denominators do not change the
+    # primitive integer polynomial, including its positive-leading convention.
+    assert sup_norm_kernel._primitive_descending_integers(
+        [Fraction(-2 * content, 7), Fraction(3 * content, 7)]
+    ) == (2, -3)
+
+
 def test_admitted_rational_input_uses_the_documented_height_fallback() -> None:
     # Degree-4, 32-digit rational components: admitted by the published
     # envelope, but the exact resultant factor has a 6,194-digit primitive
@@ -544,11 +565,13 @@ def test_admitted_rational_input_uses_the_documented_height_fallback() -> None:
         331,
     )
     terms = []
+    coefficients = []
     for index, exponent in enumerate(range(4, -1, -1)):
         real = Fraction(base + offsets[4 * index], base + offsets[4 * index + 1])
         imaginary = Fraction(
             base + offsets[4 * index + 2], base + offsets[4 * index + 3]
         )
+        coefficients.append((real, imaginary))
         terms.append(
             {
                 "exponent": exponent,
@@ -572,6 +595,15 @@ def test_admitted_rational_input_uses_the_documented_height_fallback() -> None:
 
     assert result.degree == 4
     assert result.sup_norm_squared_exact is None
+    # Independently evaluate P(1), the t=0 point in the retained transform.
+    at_one = (
+        sum(real for real, _ in coefficients) ** 2
+        + sum(imaginary for _, imaginary in coefficients) ** 2
+    )
+    assert result.transformed_numerator[0].as_fraction() == at_one
+    assert at_one <= Fraction(
+        *result.sup_norm_squared_enclosure.upper.as_integer_ratio()
+    )
     assert verify_unit_circle_sup_norm_squared(result)
     assert (
         UnitCircleSupNormSquaredResult.model_validate_json(result.model_dump_json())
