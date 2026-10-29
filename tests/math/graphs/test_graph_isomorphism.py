@@ -147,20 +147,12 @@ def test_serialized_isomorphism_claim_is_verified_against_its_graphs() -> None:
             ],
             id="missing-vertex",
         ),
-        pytest.param(
-            [
-                {"from_vertex": 0, "to_vertex": 1},
-                {"from_vertex": 1, "to_vertex": 0},
-                {"from_vertex": 2, "to_vertex": 2},
-            ],
-            id="not-adjacency-preserving",
-        ),
     ],
 )
 def test_isomorphic_result_rejects_invalid_mapping(
     mapping: list[dict[str, int]],
 ) -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as error:
         GraphIsomorphismResult.model_validate(
             {
                 "graph_a": {
@@ -175,6 +167,10 @@ def test_isomorphic_result_rejects_invalid_mapping(
                 "vertex_mapping": mapping,
             }
         )
+    assert (
+        error.value.errors()[0]["type"]
+        == "graph.isomorphic_result_mapping_must_be_total_bijection"
+    )
 
 
 def test_isomorphic_result_accepts_any_total_bijection_order() -> None:
@@ -209,10 +205,10 @@ def test_directed_mapping_must_preserve_edge_orientation() -> None:
         }
     )
     assert verify_graph_isomorphism(identity)
-    # Swapping the endpoints is a bijection but reverses the only arc, so it
-    # must not be accepted for a directed graph.
-    with pytest.raises(ValidationError, match="directed or undirected adjacency"):
-        GraphIsomorphismResult.model_validate(
+    # A false relation with valid shape parses; only the explicit verifier
+    # evaluates adjacency. Decoding must not replay the defining relation.
+    swapped = GraphIsomorphismResult.model_validate_json(
+        json.dumps(
             {
                 **payload,
                 "vertex_mapping": [
@@ -221,22 +217,21 @@ def test_directed_mapping_must_preserve_edge_orientation() -> None:
                 ],
             }
         )
+    )
+    assert not verify_graph_isomorphism(swapped)
 
 
 @pytest.mark.parametrize(
-    ("graph_b", "message"),
+    "graph_b",
     [
-        ({"vertex_count": 2, "edges": []}, "equal vertex count"),
-        (
-            {"vertex_count": 3, "directed": True, "edges": [(0, 1)]},
-            "equal vertex count",
-        ),
+        {"vertex_count": 2, "edges": []},
+        {"vertex_count": 3, "directed": True, "edges": [(0, 1)]},
     ],
 )
 def test_isomorphism_result_rejects_mismatched_graph_pair(
-    graph_b: dict[str, Any], message: str
+    graph_b: dict[str, Any],
 ) -> None:
-    with pytest.raises(ValidationError, match=message):
+    with pytest.raises(ValidationError) as error:
         GraphIsomorphismResult.model_validate(
             {
                 "graph_a": {"vertex_count": 3, "edges": [(0, 1)]},
@@ -244,6 +239,10 @@ def test_isomorphism_result_rejects_mismatched_graph_pair(
                 "status": "NOT_ISOMORPHIC",
             }
         )
+    assert (
+        error.value.errors()[0]["type"]
+        == "graph.result_graphs_must_share_vertex_count_and_directedness"
+    )
 
 
 def test_negative_outcome_is_a_producer_outcome_not_a_claim() -> None:

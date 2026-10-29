@@ -15,6 +15,8 @@ from jacobian.math.graphs.values import (
     GraphVertexLabel,
 )
 
+_MAX_ISOMORPHISM_VERTICES = 64
+
 
 class SimpleGraph(StrictModel):
     """A simple graph (no parallel edges, no self-loops) for isomorphism.
@@ -24,7 +26,7 @@ class SimpleGraph(StrictModel):
     edge so ``(u, v)`` and ``(v, u)`` describe the same adjacency.
     """
 
-    vertex_count: int = Field(ge=1, le=64)
+    vertex_count: int = Field(ge=1, le=_MAX_ISOMORPHISM_VERTICES)
     directed: bool = False
     edges: tuple[tuple[int, int], ...] = Field(default=(), max_length=512)
 
@@ -68,46 +70,8 @@ class GraphIsomorphismRequest(StrictModel):
 class VertexMappingPair(StrictModel):
     """One ``(from_vertex, to_vertex)`` entry in an isomorphism witness."""
 
-    from_vertex: int = Field(ge=0, le=63)
-    to_vertex: int = Field(ge=0, le=63)
-
-
-def _is_isomorphism_mapping(
-    graph_a: SimpleGraph,
-    graph_b: SimpleGraph,
-    mapping: tuple[VertexMappingPair, ...],
-) -> bool:
-    """Check that ``mapping`` is a total adjacency-preserving bijection.
-
-    This is the linearly bounded defining relation of an ``ISOMORPHIC``
-    result. It does not search for a mapping and does not decide
-    ``NOT_ISOMORPHIC`` outcomes.
-    """
-
-    if len(mapping) != graph_a.vertex_count:
-        return False
-    forward: dict[int, int] = {}
-    for pair in mapping:
-        if pair.from_vertex in forward:
-            return False
-        forward[pair.from_vertex] = pair.to_vertex
-    if set(forward) != set(range(graph_a.vertex_count)):
-        return False
-    if set(forward.values()) != set(range(graph_b.vertex_count)):
-        return False
-    edges_b = {
-        edge if graph_b.directed else (min(edge), max(edge)) for edge in graph_b.edges
-    }
-    mapped_edges = {
-        (forward[source], forward[target])
-        if graph_a.directed
-        else (
-            min(forward[source], forward[target]),
-            max(forward[source], forward[target]),
-        )
-        for source, target in graph_a.edges
-    }
-    return mapped_edges == edges_b
+    from_vertex: int = Field(ge=0, le=_MAX_ISOMORPHISM_VERTICES - 1)
+    to_vertex: int = Field(ge=0, le=_MAX_ISOMORPHISM_VERTICES - 1)
 
 
 class GraphIsomorphismResult(StrictModel):
@@ -115,13 +79,17 @@ class GraphIsomorphismResult(StrictModel):
 
     When ``status`` is ``ISOMORPHIC`` the ``vertex_mapping`` field carries an
     explicit bijection as a list of ``(from_vertex, to_vertex)`` pairs.
-    ``NOT_ISOMORPHIC`` carries no mapping.
+    ``NOT_ISOMORPHIC`` carries no mapping. Parsing checks source and witness
+    structure; the explicit verifier checks adjacency preservation for an
+    independently supplied positive claim.
     """
 
     graph_a: SimpleGraph
     graph_b: SimpleGraph
     status: Literal["ISOMORPHIC", "NOT_ISOMORPHIC"]
-    vertex_mapping: tuple[VertexMappingPair, ...] = Field(default=())
+    vertex_mapping: tuple[VertexMappingPair, ...] = Field(
+        default=(), max_length=_MAX_ISOMORPHISM_VERTICES
+    )
 
     @model_validator(mode="after")
     def bind_mapping_to_status(self) -> Self:
@@ -153,12 +121,6 @@ class GraphIsomorphismResult(StrictModel):
                 "graph.isomorphic_result_mapping_must_be_total_bijection",
                 "an ISOMORPHIC result must carry a total bijection between "
                 "the source graphs' vertices",
-            )
-        if not _is_isomorphism_mapping(self.graph_a, self.graph_b, self.vertex_mapping):
-            raise PydanticCustomError(
-                "graph.isomorphic_result_mapping_must_preserve_adjacency",
-                "an ISOMORPHIC result mapping must preserve the complete "
-                "directed or undirected adjacency relation",
             )
         return self
 

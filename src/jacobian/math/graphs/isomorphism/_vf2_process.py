@@ -29,7 +29,6 @@ from jacobian.math.graphs.isomorphism._models import (
     GraphIsomorphismResult,
     SimpleGraph,
     VertexMappingPair,
-    _is_isomorphism_mapping,
 )
 from jacobian.math.graphs.isomorphism.operations import _canonicalize_colored_graph
 
@@ -39,6 +38,35 @@ _VF2_STDOUT_LIMIT = 256 * 1024
 _VF2_STDERR_LIMIT = 64 * 1024
 _VF2_ADDRESS_SPACE_BYTES = 1024 * 1024 * 1024
 _VF2_FILE_SIZE_BYTES = 1024 * 1024
+
+
+def _is_isomorphism_mapping(
+    graph_a: SimpleGraph,
+    graph_b: SimpleGraph,
+    mapping: tuple[VertexMappingPair, ...],
+) -> bool:
+    """Check the bounded defining relation without searching for a witness."""
+
+    if len(mapping) != graph_a.vertex_count:
+        return False
+    forward = {pair.from_vertex: pair.to_vertex for pair in mapping}
+    if set(forward) != set(range(graph_a.vertex_count)):
+        return False
+    if set(forward.values()) != set(range(graph_b.vertex_count)):
+        return False
+    edges_b = {
+        edge if graph_b.directed else (min(edge), max(edge)) for edge in graph_b.edges
+    }
+    mapped_edges = {
+        (forward[source], forward[target])
+        if graph_a.directed
+        else (
+            min(forward[source], forward[target]),
+            max(forward[source], forward[target]),
+        )
+        for source, target in graph_a.edges
+    }
+    return mapped_edges == edges_b
 
 
 def _admit_graph_isomorphism(request: GraphIsomorphismRequest) -> None:
@@ -226,19 +254,14 @@ def _vertex_mapping(
         range(graph_b.vertex_count)
     ):
         raise OperationBackendError(BackendFailureReason.INVALID_OUTPUT)
-    forward = dict(pairs)
-    edges_b = {
-        edge if graph_b.directed else tuple(sorted(edge)) for edge in graph_b.edges
-    }
-    if {
-        (forward[source], forward[target])
-        if graph_a.directed
-        else tuple(sorted((forward[source], forward[target])))
-        for source, target in graph_a.edges
-    } != edges_b:
+    witness = tuple(
+        VertexMappingPair(from_vertex=source, to_vertex=target)
+        for source, target in pairs
+    )
+    if not _is_isomorphism_mapping(graph_a, graph_b, witness):
         raise OperationBackendError(BackendFailureReason.INVALID_OUTPUT)
     request_checkpoint("after graph isomorphism response validation")
-    return [VertexMappingPair(from_vertex=src, to_vertex=dst) for src, dst in pairs]
+    return list(witness)
 
 
 def decide_graph_isomorphism(
